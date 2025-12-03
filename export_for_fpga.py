@@ -1,0 +1,107 @@
+import torch
+import os
+import numpy as np
+import torch.nn as nn
+from net_model_qat import Litenet_QAT
+
+# ================= 配置 =================
+QAT_MODEL_PATH = "qat_checkpoints/litenet_int8_qat.pth"
+EXPORT_DIR = "fpga_params"
+NUM_CLASSES = 12
+# ========================================
+
+def load_quantized_model():
+    """
+    加载量化模型的标准流程（与 eval 脚本一致）
+    """
+    print(f"[-] 正在加载量化模型架构...")
+    model = Litenet_QAT(num_classes=NUM_CLASSES)
+    
+    # 1. 融合 & 准备
+    model.eval()
+    model.fuse_model()
+    model.train() # 必须切回 train 才能 prepare
+    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    torch.quantization.prepare_qat(model, inplace=True)
+    
+    # 2. 转换 & 加载权重
+    model.cpu()
+    model.eval()
+    quantized_model = torch.quantization.convert(model, inplace=False)
+    
+    print(f"[-] 加载权重: {QAT_MODEL_PATH}")
+    state_dict = torch.load(QAT_MODEL_PATH, map_location='cpu')
+    quantized_model.load_state_dict(state_dict)
+    return quantized_model
+
+def save_layer_params(layer_name, module):
+    """
+    提取并保存单层的参数
+    """
+    # 确保是量化卷积层 (QuantizedConv2d 或 QuantizedConvReLU2d)
+    if hasattr(module, 'weight'):
+        target_dir = os.path.join(EXPORT_DIR, layer_name)
+        os.makedirs(target_dir, exist_ok=True)
+        
+        print(f"    正在导出: {layer_name}")
+        
+        # 1. 导出权重 (INT8)
+        # int_repr() 获取底层的 int8 整数值
+        # numpy() 转为 numpy 数组
+        # astype(np.int8) 确保是 8位整数
+        w_int8 = module.weight().int_repr().numpy().astype(np.int8)
+        w_int8.tofile(os.path.join(target_dir, "weights.bin"))
+        
+        # 2. 导出 Bias (Float32)
+        # FPGA 端通常需要结合 Scale 将其转为 int32，或者直接用 float 计算
+        if module.bias() is not None:
+            bias = module.bias().detach().numpy().astype(np.float32)
+        else:
+            bias = np.zeros(w_int8.shape[0], dtype=np.float32)
+        bias.tofile(os.path.join(target_dir, "bias.bin"))
+        
+        # 3. 导出量化参数 (Scale & ZeroPoint)
+        # 这些用于反量化或层间数据对齐
+        scale = float(module.scale)
+        zero_point = int(module.zero_point)
+        
+        with open(os.path.join(target_dir, "quant_info.txt"), "w") as f:
+            f.write(f"scale: {scale}\n")
+            f.write(f"zero_point: {zero_point}\n")
+            f.write(f"weight_shape: {w_int8.shape}\n") # (Out, In/Groups, k, k)
+
+def main():
+    if not os.path.exists(QAT_MODEL_PATH):
+        print("错误：找不到模型文件")
+        return
+
+    model = load_quantized_model()
+    
+    print(f"\n[-] 开始导出参数至目录: {EXPORT_DIR}/")
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    
+    # === 逐层导出 ===
+    # Litenet 结构: SeparableConv (Depthwise + Pointwise)
+    # 注意：model.block1_conv 现在已经是 Quantized 模块了
+    
+    # Block 1
+    save_layer_params("block1_depthwise", model.block1_conv.depthwise)
+    save_layer_params("block1_pointwise", model.block1_conv.pointwise) # 这里的 pointwise 已包含 fuse 进来的 BN+ReLU
+    
+    # Block 2
+    save_layer_params("block2_depthwise", model.block2_conv.depthwise)
+    save_layer_params("block2_pointwise", model.block2_conv.pointwise)
+    
+    # Block 3
+    save_layer_params("block3_depthwise", model.block3_conv.depthwise)
+    save_layer_params("block3_pointwise", model.block3_conv.pointwise)
+    
+    # Classifier (Linear 层也量化了)
+    # Linear 层在 convert 后通常变成 QuantizedLinear
+    save_layer_params("classifier", model.classifier)
+
+    print("\n[-] 导出完成！")
+    print("    请检查 fpga_params 文件夹，每个层都有 weights.bin 和 bias.bin")
+
+if __name__ == "__main__":
+    main()
