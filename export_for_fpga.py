@@ -38,7 +38,6 @@ def save_layer_params(layer_name, module):
     """
     提取并保存单层的参数
     """
-    # 确保是量化卷积层 (QuantizedConv2d 或 QuantizedConvReLU2d)
     if hasattr(module, 'weight'):
         target_dir = os.path.join(EXPORT_DIR, layer_name)
         os.makedirs(target_dir, exist_ok=True)
@@ -46,29 +45,28 @@ def save_layer_params(layer_name, module):
         print(f"    正在导出: {layer_name}")
         
         # 1. 导出权重 (INT8)
-        # int_repr() 获取底层的 int8 整数值
-        # numpy() 转为 numpy 数组
-        # astype(np.int8) 确保是 8位整数
         w_int8 = module.weight().int_repr().numpy().astype(np.int8)
         w_int8.tofile(os.path.join(target_dir, "weights.bin"))
         
-        # 2. 导出 Bias (Float32)
-        # FPGA 端通常需要结合 Scale 将其转为 int32，或者直接用 float 计算
-        if module.bias() is not None:
-            bias = module.bias().detach().numpy().astype(np.float32)
-        else:
-            bias = np.zeros(w_int8.shape[0], dtype=np.float32)
-        bias.tofile(os.path.join(target_dir, "bias.bin"))
+        # 2. 导出 Bias (只有存在时才导出)
+        has_bias = module.bias() is not None
         
-        # 3. 导出量化参数 (Scale & ZeroPoint)
-        # 这些用于反量化或层间数据对齐
+        if has_bias:
+            bias = module.bias().detach().numpy().astype(np.float32)
+            bias.tofile(os.path.join(target_dir, "bias.bin"))
+            print(f"      ✓ 导出 bias: shape={bias.shape}")
+        else:
+            print(f"      ✗ 无 bias (跳过)")
+        
+        # 3. 导出量化参数
         scale = float(module.scale)
         zero_point = int(module.zero_point)
         
         with open(os.path.join(target_dir, "quant_info.txt"), "w") as f:
             f.write(f"scale: {scale}\n")
             f.write(f"zero_point: {zero_point}\n")
-            f.write(f"weight_shape: {w_int8.shape}\n") # (Out, In/Groups, k, k)
+            f.write(f"weight_shape: {w_int8.shape}\n")
+            f.write(f"has_bias: {has_bias}\n")  # ← 添加标记
 
 def main():
     if not os.path.exists(QAT_MODEL_PATH):

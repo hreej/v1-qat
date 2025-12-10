@@ -1,3 +1,4 @@
 scale: 0.10783898830413818
 zero_point: 62
 weight_shape: (3, 1, 9, 9)
+has_bias: False
