@@ -1,0 +1,12 @@
+// Layer: block2_depthwise (Quantized Multiplier)
+#ifndef BLOCK2_DEPTHWISE_MULT_H
+#define BLOCK2_DEPTHWISE_MULT_H
+
+#include <stdint.h>
+
+static const int32_t block2_depthwise_mult[16] = {
+    1733360914, 1395278989, 1927239909, 2096759148, 1558935693, 1855116563, 1114220204, 1710914907, 
+    1535257189, 1872364078, 1169882755, 1316660821, 1552592542, 2014498828, 1909727286, 1229479862, 
+    
+};
+#endif

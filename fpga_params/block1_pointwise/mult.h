@@ -1,0 +1,12 @@
+// Layer: block1_pointwise (Quantized Multiplier)
+#ifndef BLOCK1_POINTWISE_MULT_H
+#define BLOCK1_POINTWISE_MULT_H
+
+#include <stdint.h>
+
+static const int32_t block1_pointwise_mult[16] = {
+    1752719335, 1137691212, 1655037922, 1220607426, 1927103055, 1764181719, 1473529910, 1661527623, 
+    1335801659, 1199623742, 1182271859, 1850776592, 1100135489, 1131141306, 1368381971, 1076455524, 
+    
+};
+#endif
