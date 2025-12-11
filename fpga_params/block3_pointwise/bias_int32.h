@@ -1,7 +1,11 @@
-// Layer: block3_pointwise
+// Layer: block3_pointwise (INT32 Bias)
 // Input Scale: 0.12683651
-// Count: 128
-const int32_t block3_pointwise_bias[] = {
+#ifndef BLOCK3_POINTWISE_BIAS_INT32_H
+#define BLOCK3_POINTWISE_BIAS_INT32_H
+
+#include <stdint.h>
+
+static const int32_t block3_pointwise_bias_int32[128] = {
     5923, 2444, 2469, 1019, -1035, -1205, 423, 829, 
     -2542, -1018, -3314, -2046, 4049, -292, 931, -4260, 
     -2972, 7065, 1039, -3, 2690, -63, 1134, 1003, 
@@ -20,3 +24,4 @@ const int32_t block3_pointwise_bias[] = {
     6509, 6746, -40, 2361, -201, -1863, -790, 3295, 
     
 };
+#endif
