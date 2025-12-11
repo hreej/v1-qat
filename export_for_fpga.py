@@ -48,6 +48,26 @@ def save_layer_params(layer_name, module):
         w_int8 = module.weight().int_repr().numpy().astype(np.int8)
         w_int8.tofile(os.path.join(target_dir, "weights.bin"))
         
+        # 1.1 导出权重为 .h 头文件
+        h_path = os.path.join(target_dir, "weights.h")
+        with open(h_path, "w") as f:
+            f.write(f"// {layer_name} weights (int8)\n")
+            f.write(f"#ifndef {layer_name.upper()}_WEIGHTS_H\n")
+            f.write(f"#define {layer_name.upper()}_WEIGHTS_H\n\n")
+            f.write("#include <stdint.h>\n\n")
+            
+            flat_w = w_int8.flatten()
+            f.write(f"static const int8_t {layer_name}_weights[{len(flat_w)}] = {{\n")
+            
+            for i, val in enumerate(flat_w):
+                f.write(f"{val}, ")
+                if (i + 1) % 16 == 0:
+                    f.write("\n")
+            
+            f.write("\n};\n")
+            f.write(f"#endif\n")
+        print(f"      ✓ 导出 weights.h")
+        
         # 2. 导出 Bias (只有存在时才导出)
         has_bias = module.bias() is not None
         
@@ -55,6 +75,22 @@ def save_layer_params(layer_name, module):
             bias = module.bias().detach().numpy().astype(np.float32)
             bias.tofile(os.path.join(target_dir, "bias.bin"))
             print(f"      ✓ 导出 bias: shape={bias.shape}")
+            
+            # 2.1 导出 Bias 为 .h 头文件
+            h_path = os.path.join(target_dir, "bias.h")
+            with open(h_path, "w") as f:
+                f.write(f"// {layer_name} bias (float32)\n")
+                f.write(f"#ifndef {layer_name.upper()}_BIAS_H\n")
+                f.write(f"#define {layer_name.upper()}_BIAS_H\n\n")
+                
+                f.write(f"static const float {layer_name}_bias[{len(bias)}] = {{\n")
+                for i, val in enumerate(bias):
+                    f.write(f"{val:.8f}f, ")
+                    if (i + 1) % 8 == 0:
+                        f.write("\n")
+                f.write("\n};\n")
+                f.write(f"#endif\n")
+            print(f"      ✓ 导出 bias.h")
         else:
             print(f"      ✗ 无 bias (跳过)")
         
