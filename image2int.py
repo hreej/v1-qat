@@ -4,15 +4,18 @@ from torchvision import transforms
 from PIL import Image
 import numpy as np
 import os
+import struct
 from net_model_qat import Litenet_QAT
 
 # ================= 配置 =================
 # 1. 模型路径 (必须加载才能获取 Input Scale/ZP)
 QAT_MODEL_PATH = "qat_checkpoints/litenet_int8_qat.pth"
 # 2. 你的测试图片路径
-IMAGE_PATH = "TUNGRO1_067.jpg"  # <--- 修改为你的图片文件名
+IMAGE_PATH = r"D:\study\CNN_demo\Litenet\dataset_v5\valid\cotton_target_spot\crop_20.jpg"  # <--- 修改为你的图片文件名
 # 3. 输出头文件名称
-OUTPUT_HEADER = "input_image.h"
+OUTPUT_HEADER = "image/input_image.h"
+OUTPUT_PACKED_HEADER = "image/input_image_packed.h"
+OUTPUT_BIN = "image/image.bin"
 # 4. 类别数
 NUM_CLASSES = 12
 # ========================================
@@ -83,6 +86,51 @@ def process_image(image_path, input_scale, input_zp):
     
     return img_np
 
+def save_packed_to_header(img_np, filename):
+    """将 int8 数据打包为 int32 并保存为 C++ 头文件"""
+    # 展平数组
+    flat_data = img_np.flatten()
+    
+    # 补齐到 4 的倍数
+    if len(flat_data) % 4 != 0:
+        pad_len = 4 - (len(flat_data) % 4)
+        flat_data = np.pad(flat_data, (0, pad_len), 'constant')
+
+    packed_data = []
+    for i in range(0, len(flat_data), 4):
+        # Little-endian packing
+        b0 = int(flat_data[i]) & 0xFF
+        b1 = int(flat_data[i+1]) & 0xFF
+        b2 = int(flat_data[i+2]) & 0xFF
+        b3 = int(flat_data[i+3]) & 0xFF
+        
+        packed_val = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
+        packed_data.append(packed_val)
+
+    print(f"[-] 生成打包头文件: {filename}")
+    with open(filename, "w") as f:
+        f.write("// Auto-generated packed data header from image2int8.py\n")
+        f.write(f"// Original Image: {IMAGE_PATH}\n")
+        f.write("#ifndef INPUT_IMAGE_PACKED_H\n")
+        f.write("#define INPUT_IMAGE_PACKED_H\n\n")
+        f.write("#include <ap_int.h>\n\n")
+        f.write(f"// Original elements: {len(flat_data)}\n")
+        f.write(f"// Packed elements: {len(packed_data)}\n")
+        f.write(f"static ap_int<32> input_packed_arr[{len(packed_data)}] = {{\n")
+        
+        for i, val in enumerate(packed_data):
+            f.write(f"    0x{val:08X}")
+            if i < len(packed_data) - 1:
+                f.write(",")
+            if (i + 1) % 8 == 0:
+                f.write("\n")
+            else:
+                f.write(" ")
+                
+        f.write("\n};\n\n")
+        f.write("#endif\n")
+    print("    打包完成！")
+
 def save_to_header(img_np, filename):
     """保存为 C++ 头文件"""
     # 展平数组: [3, 128, 128] -> [49152]
@@ -108,6 +156,33 @@ def save_to_header(img_np, filename):
         f.write(f"#endif\n")
     print("    完成！")
 
+def save_packed_to_bin(img_np, filename):
+    """将 int8 数据打包为 int32 并保存为二进制文件"""
+    # 展平数组
+    flat_data = img_np.flatten()
+    
+    # 补齐到 4 的倍数
+    if len(flat_data) % 4 != 0:
+        pad_len = 4 - (len(flat_data) % 4)
+        flat_data = np.pad(flat_data, (0, pad_len), 'constant')
+
+    packed_data = []
+    for i in range(0, len(flat_data), 4):
+        # Little-endian packing
+        b0 = int(flat_data[i]) & 0xFF
+        b1 = int(flat_data[i+1]) & 0xFF
+        b2 = int(flat_data[i+2]) & 0xFF
+        b3 = int(flat_data[i+3]) & 0xFF
+        
+        packed_val = (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
+        packed_data.append(packed_val)
+
+    print(f"[-] 生成二进制文件: {filename}")
+    with open(filename, 'wb') as f_out:
+        for val in packed_data:
+            f_out.write(struct.pack('<I', val))
+    print(f"    二进制文件生成完成! 大小: {len(packed_data) * 4} 字节")
+
 def main():
     # 1. 获取量化参数
     s_in, zp_in = load_quant_params()
@@ -123,6 +198,8 @@ def main():
     # 3. 导出
     if img_int8 is not None:
         save_to_header(img_int8, OUTPUT_HEADER)
+        save_packed_to_header(img_int8, OUTPUT_PACKED_HEADER)
+        save_packed_to_bin(img_int8, OUTPUT_BIN)
         
         # 打印部分数据预览
         print("\n数据预览 (前20个数值):")

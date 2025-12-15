@@ -49,7 +49,13 @@ def get_quantized_scale(scale_val):
     significand, exponent = math.frexp(scale_val)
     
     # 将小数部分映射到 int32 的高位 (乘以 2^31) 以最大化精度
-    significand_q = int(round(significand * (1 << 31)))
+    val = round(significand * (1 << 31))
+    
+    # [修复] 防止溢出 int32 (最大值 2147483647)
+    if val > 2147483647:
+        val = 2147483647
+        
+    significand_q = int(val)
     
     # 调整 shift
     # 我们希望: significand_q * 2^(-31) * 2^exponent = scale
@@ -239,6 +245,34 @@ def save_layer_params(layer_name, module, input_scale):
             f.write(f"zero_point: {zero_point}\n")
             f.write(f"weight_shape: {w_int8.shape}\n")
 
+# [新增] 导出全局输入参数
+def save_input_params(model):
+    """
+    导出全局输入的量化参数 (Scale 和 Zero Point)
+    """
+    target_dir = os.path.join(EXPORT_DIR, "input_params")
+    os.makedirs(target_dir, exist_ok=True)
+    
+    # 获取参数 (处理可能是 tensor 的情况)
+    scale = float(model.quant.scale)
+    zp = int(model.quant.zero_point)
+    
+    print(f"    正在导出: input_params (Scale={scale:.6f}, ZP={zp})")
+    
+    # 导出 input_zp.h
+    with open(os.path.join(target_dir, "input_zp.h"), "w") as f:
+        f.write(f"// Global Input Zero Point\n")
+        f.write(f"#ifndef INPUT_ZP_H\n")
+        f.write(f"#define INPUT_ZP_H\n\n")
+        f.write("#include <stdint.h>\n\n")
+        f.write(f"static const int8_t input_zp = {zp};\n")
+        f.write(f"#endif\n")
+        
+    # 导出 input_scale (仅供参考，FPGA计算通常不需要浮点scale)
+    with open(os.path.join(target_dir, "input_info.txt"), "w") as f:
+        f.write(f"scale: {scale}\n")
+        f.write(f"zero_point: {zp}\n")
+
 def main():
     if not os.path.exists(QAT_MODEL_PATH):
         print("错误：找不到模型文件")
@@ -248,6 +282,9 @@ def main():
     
     print(f"\n[-] 开始导出参数至目录: {EXPORT_DIR}/")
     os.makedirs(EXPORT_DIR, exist_ok=True)
+    
+    # [新增] 导出输入层参数
+    save_input_params(model)
     
     # 获取 Global Input Scale
     input_scale_global = float(model.quant.scale)

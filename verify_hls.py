@@ -7,7 +7,7 @@ from net_model_qat import Litenet_QAT
 
 # ================= 配置 =================
 QAT_MODEL_PATH = "qat_checkpoints/litenet_int8_qat.pth"
-IMAGE_PATH = "TUNGRO1_067.jpg"
+IMAGE_PATH = r"D:\study\CNN_demo\Litenet\dataset_v5\valid\cotton_target_spot\crop_20.jpg"
 NUM_CLASSES = 12
 # ========================================
 
@@ -257,23 +257,28 @@ def main():
         int8_values = int8_output.int_repr().numpy().flatten()
         
         float_output = quantized_model.dequant(int8_output)
+        # 获取反量化后的浮点数值 (Logits)
+        float_values = float_output.numpy().flatten()
         probs = torch.nn.functional.softmax(float_output, dim=1).numpy().flatten()
 
     # 4. 打印结果
     print("\n" + "="*70)
     print("PyTorch 标准输出 (Golden Reference)")
     print("="*70)
-    print(f"{'Class':<6} | {'Int8 Value':<12} | {'Prob':<8}")
-    print("-" * 40)
+    # 修改表头，增加反量化后的浮点值列
+    print(f"{'Class':<6} | {'Int8 Value':<12} | {'Deq Float':<12} | {'Prob':<8}")
+    print("-" * 55)
     
     max_idx = np.argmax(int8_values)
     
     for i, val in enumerate(int8_values):
         mark = " ★" if i == max_idx else ""
-        print(f"{i:<6} | {val:<12} | {probs[i]:.4f}{mark}")
+        # 打印 Int8值, 反量化Float值, 和 Softmax概率
+        print(f"{i:<6} | {val:<12} | {float_values[i]:<12.4f} | {probs[i]:.4f}{mark}")
     
-    print("-" * 40)
+    print("-" * 55)
     print(f"预测类别: {max_idx}")
+    print(f"预测概率: {probs[max_idx]:.6f}")
     print("="*70)
     
     print("\n" + "="*70)
