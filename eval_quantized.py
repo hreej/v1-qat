@@ -8,18 +8,23 @@ from torch.utils.data import DataLoader
 
 # 导入你的 QAT 模型定义
 from net_model_qat import Litenet_QAT
+# 导入原始浮点模型用于对比
+from net_model import Litenet
 
 # ================= 配置区域 =================
 # 1. 量化模型路径
-QAT_MODEL_PATH = "qat_checkpoints/litenet_int8_qat.pth"
+QAT_MODEL_PATH = "float2int/qat_checkpoints/litenet_int8_qat.pth"
 
 # 2. 原始浮点模型路径 (用于对比文件大小)
-FLOAT_MODEL_PATH = "pth/best_model_distill.pth"
+FLOAT_MODEL_PATH = "float2int/pth/best_model_distill.pth"
 
 # 3. 验证集路径
 VALID_DIR = r"D:\study\CNN_demo\Litenet\dataset_v5\valid"
 
-# 4. 设置
+# 4. 评估结果保存路径
+EVAL_RESULTS_PATH = "float2int/eval_results.txt"
+
+# 5. 设置
 NUM_CLASSES = 12
 IMG_SIZE = 128
 # PyTorch 的 INT8 推理目前只能在 CPU 上运行
@@ -101,6 +106,48 @@ def benchmark_speed(model, iterations=500):
             
     return np.mean(times)
 
+def count_parameters(model):
+    """统计模型参数量 (兼容浮点和量化模型)"""
+    # 1. 尝试常规方法 (适用于浮点模型)
+    # model.parameters() 是一个生成器，如果为空说明是量化模型
+    params_list = list(model.parameters())
+    if len(params_list) > 0:
+        total_params = sum(p.numel() for p in params_list)
+        trainable_params = sum(p.numel() for p in params_list if p.requires_grad)
+        return total_params, trainable_params
+
+    # 2. 针对量化模型的方法
+    # PyTorch 量化模型的参数存储在内部结构中，不通过 .parameters() 暴露
+    # 我们需要遍历所有子模块，手动获取 weight 和 bias
+    total_params = 0
+    for m in model.modules():
+        # 检查 weight (量化层通常是方法 m.weight()，普通层是属性 m.weight)
+        if hasattr(m, 'weight'):
+            w = m.weight() if callable(m.weight) else m.weight
+            if w is not None:
+                total_params += w.numel()
+        
+        # 检查 bias
+        if hasattr(m, 'bias'):
+            b = m.bias() if callable(m.bias) else m.bias
+            if b is not None:
+                total_params += b.numel()
+                
+    return total_params, 0  # 量化模型在推理阶段不可训练
+
+def calculate_flops(model, input_size=(1, 3, 128, 128)):
+    """计算模型的 FLOPs"""
+    try:
+        from thop import profile, clever_format
+        dummy_input = torch.randn(input_size)
+        flops, params = profile(model, inputs=(dummy_input,), verbose=False)
+        flops_formatted, params_formatted = clever_format([flops, params], "%.3f")
+        return flops, flops_formatted
+    except ImportError:
+        print("    [警告] 未安装 thop 库,无法计算 FLOPs")
+        print("    安装命令: pip install thop")
+        return None, None
+
 def main():
     print("="*60)
     print("INT8 量化模型评估")
@@ -122,6 +169,19 @@ def main():
         print(f"加载失败: {e}")
         print("提示: 请确保 net_model_qat.py 中的 fuse_model 逻辑与 train_qat.py 中完全一致。")
         return
+    
+    # 加载原始浮点模型用于对比
+    print(f"\n[-] 正在加载原始浮点模型用于对比...")
+    float_model = Litenet(num_classes=NUM_CLASSES)
+    if os.path.exists(FLOAT_MODEL_PATH):
+        checkpoint = torch.load(FLOAT_MODEL_PATH, map_location="cpu")
+        # 检查是否是完整的 checkpoint (包含 model_state_dict)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            float_model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            # 直接是 state_dict
+            float_model.load_state_dict(checkpoint)
+    float_model.eval()
 
     # 3. 对比文件大小
     float_size = get_file_size(FLOAT_MODEL_PATH)
@@ -131,24 +191,46 @@ def main():
     print(f"    量化模型: {int8_size:.2f} MB")
     print(f"    压缩比率: {float_size / int8_size:.1f}x (通常应接近 4x)")
     
-    # 4. 测试精度
-    acc = evaluate_accuracy(int8_model, loader)
-    print(f"\n[2] INT8 验证集精度: {acc:.2f}%")
+    # 4. 对比参数量
+    float_params, float_trainable = count_parameters(float_model)
+    int8_params, int8_trainable = count_parameters(int8_model)
+    print(f"\n[2] 参数量对比:")
+    print(f"    浮点模型总参数: {float_params:,}")
+    print(f"    量化模型总参数: {int8_params:,}")
+    print(f"    可训练参数 (浮点): {float_trainable:,}")
+    print(f"    可训练参数 (量化): {int8_trainable:,}")
     
-    # 5. 测试速度 (CPU)
-    print(f"\n[3] CPU 推理速度 (Batch=1):")
+    # 5. 对比计算量 (FLOPs)
+    print(f"\n[3] 计算量对比 (FLOPs):")
+    float_flops, float_flops_str = calculate_flops(float_model)
+    int8_flops, int8_flops_str = calculate_flops(int8_model)
+    
+    if float_flops is not None:
+        print(f"    浮点模型: {float_flops_str} ({float_flops:,})")
+        if int8_flops is not None:
+            print(f"    量化模型: {int8_flops_str} ({int8_flops:,})")
+            print(f"    注: INT8 理论计算量相同,但实际运算效率更高")
+        else:
+            print(f"    量化模型: 无法计算 (结构不兼容 thop)")
+    
+    # 6. 测试精度
+    acc = evaluate_accuracy(int8_model, loader)
+    print(f"\n[4] INT8 验证集精度: {acc:.2f}%")
+    
+    # 7. 测试速度 (CPU)
+    print(f"\n[5] CPU 推理速度 (Batch=1):")
     avg_time = benchmark_speed(int8_model)
     print(f"    平均耗时: {avg_time:.4f} ms")
     print(f"    FPS:      {1000/avg_time:.1f}")
 
-    # 6. 检查结构 (验证是否真的量化了)
-    print(f"\n[4] 结构抽查 (Block1 Pointwise):")
+    # 8. 检查结构 (验证是否真的量化了)
+    print(f"\n[6] 结构抽查 (Block1 Pointwise):")
     # 检查第一层的 pointwise 卷积是否变成了 QuantizedConvReLU2d
     print(f"    类型: {type(int8_model.block1_conv.pointwise)}")
     print(f"    (应包含 'Quantized' 字样)")
 
     # 保存结果到文件
-    with open("eval_results.txt", "w", encoding="utf-8") as f:
+    with open(EVAL_RESULTS_PATH, "w", encoding="utf-8") as f:
         f.write("="*60 + "\n")
         f.write("INT8 量化模型评估结果\n")
         f.write("="*60 + "\n")
@@ -156,15 +238,29 @@ def main():
         f.write(f"    浮点模型: {float_size:.2f} MB\n")
         f.write(f"    量化模型: {int8_size:.2f} MB\n")
         f.write(f"    压缩比率: {float_size / int8_size:.1f}x\n")
-        f.write(f"\n[2] INT8 验证集精度: {acc:.2f}%\n")
-        f.write(f"\n[3] CPU 推理速度 (Batch=1):\n")
+        f.write(f"\n[2] 参数量对比:\n")
+        f.write(f"    浮点模型总参数: {float_params:,}\n")
+        f.write(f"    量化模型总参数: {int8_params:,}\n")
+        f.write(f"    可训练参数 (浮点): {float_trainable:,}\n")
+        f.write(f"    可训练参数 (量化): {int8_trainable:,}\n")
+        f.write(f"\n[3] 计算量对比 (FLOPs):\n")
+        if float_flops is not None:
+            f.write(f"    浮点模型: {float_flops_str} ({float_flops:,})\n")
+            if int8_flops is not None:
+                f.write(f"    量化模型: {int8_flops_str} ({int8_flops:,})\n")
+            else:
+                f.write(f"    量化模型: 无法计算 (结构不兼容 thop)\n")
+        else:
+            f.write(f"    未安装 thop 库,无法计算\n")
+        f.write(f"\n[4] INT8 验证集精度: {acc:.2f}%\n")
+        f.write(f"\n[5] CPU 推理速度 (Batch=1):\n")
         f.write(f"    平均耗时: {avg_time:.4f} ms\n")
         f.write(f"    FPS:      {1000/avg_time:.1f}\n")
-        f.write(f"\n[4] 结构抽查 (Block1 Pointwise):\n")
+        f.write(f"\n[6] 结构抽查 (Block1 Pointwise):\n")
         f.write(f"    类型: {type(int8_model.block1_conv.pointwise)}\n")
         f.write("="*60 + "\n")
     
-    print(f"\n[-] 评估结果已保存至 eval_results.txt")
+    print(f"\n[-] 评估结果已保存至 {EVAL_RESULTS_PATH}")
 
     print("="*60)
 
