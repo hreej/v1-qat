@@ -22,7 +22,7 @@ class SeparableConv2d(nn.Module):
         return x
 
 class Litenet(nn.Module):
-    def __init__(self, num_classes=9):
+    def __init__(self, num_classes=12):
         super(Litenet, self).__init__()
         
         # ===== Block 1 =====
@@ -63,9 +63,9 @@ class Litenet(nn.Module):
         # 输出: (Batch, 128, 1, 1)
         self.dropout = nn.Dropout(p=0.2)
         
-        # Linear(128 -> num_classes=9)
+        # Linear(128 -> num_classes=12)
         # 输入: (Batch, 128)
-        # 输出: (Batch, 9)
+        # 输出: (Batch, 12)
         self.classifier = nn.Linear(128, num_classes)
 
     def forward(self, x):
@@ -135,14 +135,23 @@ class Litenet(nn.Module):
         
         # --- Classification ---
         x = self.classifier(x)
-        # Linear(128 -> num_classes=9)
-        # 输出: (Batch, 9)
+        # Linear(128 -> num_classes=12)
+        # 输出: (Batch, 12)
         
         return x
 
 # --- 实例化与测试代码 ---
 if __name__ == "__main__":
-    model = Litenet(num_classes=9)
+    # 尝试导入 thop 库计算 FLOPs
+    try:
+        from thop import profile, clever_format
+        has_thop = True
+    except ImportError:
+        has_thop = False
+        print("⚠️  未安装 thop 库，无法计算 FLOPs")
+        print("   安装命令: pip install thop\n")
+    
+    model = Litenet(num_classes=12)
     
     # 创建一个模拟输入张量 (Batch_Size, Channels, Height, Width)
     dummy_input = torch.randn(1, 3, 128, 128)
@@ -213,7 +222,7 @@ if __name__ == "__main__":
     print(f"   Shape: {x.shape}")
     
     x = model.classifier(x)
-    print(f"\n⑧ 输出层 - Linear (128→9):")
+    print(f"\n⑧ 输出层 - Linear (128→12):")
     print(f"   Shape: {x.shape}")
     
     print("\n" + "=" * 80)
@@ -221,14 +230,29 @@ if __name__ == "__main__":
     # 模型统计信息
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_buffers = sum(b.numel() for b in model.buffers())
+    total_size = total_params + total_buffers
     
     print(f"\n模型参数统计:")
     print(f"  - 总参数量: {total_params:,}")
     print(f"  - 可训练参数: {trainable_params:,}")
+    print(f"  - Buffer 数量: {total_buffers:,}")
+    print(f"  - 总大小 (参数+Buffer): {total_size:,}")
+    print(f"  - 模型大小: {total_size * 4 / 1024 / 1024:.2f} MB (float32)")
+    
+    # 计算 FLOPs
+    if has_thop:
+        print("\n计算 FLOPs...")
+        model_copy = Litenet(num_classes=12)
+        input_single = torch.randn(1, 3, 128, 128)
+        flops, params = profile(model_copy, inputs=(input_single,), verbose=False)
+        flops_formatted, params_formatted = clever_format([flops, params], "%.3f")
+        print(f"  - 计算量 (FLOPs): {flops_formatted}")
+        print(f"  - FLOPs (原始值): {flops:,}")
     
     print("\n网络结构信息:")
     print(f"  - 输入尺寸: 128×128×3")
-    print(f"  - 输出类别数: 9")
+    print(f"  - 输出类别数: 12")
     print(f"  - 模型类型: 轻量级 CNN (Litenet)")
     print(f"  - 使用模块: 深度可分离卷积 (Depthwise Separable Conv)")
     

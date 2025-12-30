@@ -208,7 +208,8 @@ def main():
     if float_flops is not None:
         print(f"    浮点模型: {float_flops_str} ({float_flops:,})")
         if int8_flops is not None:
-            print(f"    量化模型: {int8_flops_str} ({int8_flops:,})")
+            # 修改提示信息
+            print(f"    量化模型: {int8_flops_str} (注意: thop 无法正确统计量化层，此数值不准确)")
             print(f"    注: INT8 理论计算量相同,但实际运算效率更高")
         else:
             print(f"    量化模型: 无法计算 (结构不兼容 thop)")
@@ -247,7 +248,7 @@ def main():
         if float_flops is not None:
             f.write(f"    浮点模型: {float_flops_str} ({float_flops:,})\n")
             if int8_flops is not None:
-                f.write(f"    量化模型: {int8_flops_str} ({int8_flops:,})\n")
+                f.write(f"    量化模型: {int8_flops_str} (注意: thop 无法正确统计量化层，此数值不准确) ({int8_flops:,})\n")
             else:
                 f.write(f"    量化模型: 无法计算 (结构不兼容 thop)\n")
         else:

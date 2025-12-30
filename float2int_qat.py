@@ -1,6 +1,4 @@
 from typing import Any
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,8 +11,8 @@ import copy
 from net_model_qat import Litenet_QAT
 
 # ================= 配置 =================
-FLOAT_MODEL_PATH = "pth/best_model_distill.pth"
-QAT_CHECKPOINT_DIR = "qat_checkpoints"
+FLOAT_MODEL_PATH = "quant_compare/qnnpack/pth/best_model_distill.pth"
+QAT_CHECKPOINT_DIR = "quant_compare/qnnpack/qat_checkpoints"
 DATA_DIR = r"D:\study\CNN_demo\Litenet\dataset_v5\train" # 用训练集微调
 VALID_DIR = r"D:\study\CNN_demo\Litenet\dataset_v5\valid"
 NUM_CLASSES = 12
@@ -55,7 +53,7 @@ def main_qat():
 
     # 4. 配置 QAT
     model.train()
-    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    model.qconfig = torch.quantization.get_default_qat_qconfig('qnnpack')
     torch.quantization.prepare_qat(model, inplace=True)
     print("[-] QAT 准备就绪")
 
